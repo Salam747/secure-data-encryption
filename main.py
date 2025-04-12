@@ -1,138 +1,127 @@
 import streamlit as st
-import hashlib
-from cryptography.fernet import Fernet
-import secrets
+import time
+from utils import load_data, save_data, encrypt_text, decrypt_text, hash_passkey, verify_passkey
 
-# ✅ Random encryption key session mein save kar rahe hain
-if "KEY" not in st.session_state:
-    st.session_state.KEY = Fernet.generate_key()
-    st.session_state.cipher = Fernet(st.session_state.KEY)
+# 🔄 For storing global variables
+stored_data = load_data()
+failed_attempts = 0
+lockout_start = None
+lockout_time = 60  # seconds
 
-# ✅ Store karne ke liye dictionary (Passkey hash aur encrypted data store karna)
-if "stored_data" not in st.session_state:
-    st.session_state.stored_data = {}
+# 📁 Set default page
+if "page" not in st.session_state:
+    st.session_state.page = "home"
 
-# ✅ Failed attempts track karne ke liye
-if "failed_attempts" not in st.session_state:
-    st.session_state.failed_attempts = 0
+# 🧑 For storing username
+if "username" not in st.session_state:
+    st.session_state.username = None
 
-# 🔐 Passkey ko hash karne ka function
-def hash_passkey(passkey):
-    """Passkey ko hash karne ka function"""
-    return hashlib.sha256(passkey.encode()).hexdigest()
+# 🟩 Login Page UI
+def login_page():
+    st.title("🔑 Login Page")
+    username = st.text_input("👤 Username")
+    password = st.text_input("🔒 Password", type="password")
 
-# 📦 Data ko encrypt karne ka function
-def encrypt_data(data, passkey):
-    """Data ko encrypt karne ka function"""
-    hashed_passkey = hash_passkey(passkey)
-    encrypted = st.session_state.cipher.encrypt(data.encode()).decode()
-
-    # Store encrypted data with hashed passkey
-    st.session_state.stored_data[hashed_passkey] = {
-        "encrypted_data": encrypted,
-        "hashed_passkey": hashed_passkey,
-    }
-    return encrypted
-
-# 🔓 Data ko decrypt karne ka function
-def decrypt_data(encrypted_data, passkey):
-    """Encrypted data ko decrypt karne ka function"""
-    try:
-        hashed_passkey = hash_passkey(passkey)
-
-        # 💡 Dictionary mein passkey ke hash se check kar rahe hain
-        if hashed_passkey in st.session_state.stored_data:
-            saved_data = st.session_state.stored_data[hashed_passkey]
-
-            # 💡 Agar encrypted_data match kare
-            if saved_data["encrypted_data"] == encrypted_data:
-                decrypted = st.session_state.cipher.decrypt(encrypted_data.encode()).decode()
-                st.session_state.failed_attempts = 0
-                return decrypted
-
-        # ❌ Match nahi hua
-        st.session_state.failed_attempts += 1
-        return None
-
-    except Exception as e:
-        st.session_state.failed_attempts += 1
-        return None
-
-# 🧭 Streamlit config aur sidebar menu
-st.set_page_config(page_title="Secure Data App", page_icon="🔐")
-st.title("🔐 Secure Data Encryption System")
-
-menu = ["🏠 Home", "🛡️ Encrypt", "🔓 Decrypt", "🔑 Login"]
-choice = st.sidebar.selectbox("📋 Menu", menu)
-
-# 🏠 Home Page
-if choice == "🏠 Home":
-    st.subheader("👋 Welcome to the Encryption System")
-    st.write("🔐 Encrypt & Decrypt sensitive data securely.")
-    st.write("📂 Use sidebar for options.")
-
-# 🛡️ Encrypt Page
-elif choice == "🛡️ Encrypt":
-    st.subheader("🛡️ Encrypt Your Data")
-    data = st.text_area("📝 Enter your data:")
-    passkey = st.text_input("🔑 Enter passkey:", type="password")
-
-    # 🎲 Option to generate a new passkey
-    if st.button("🎲 Generate Passkey"):
-        passkey = secrets.token_urlsafe(16)  # Random passkey generation
-        st.write(f"✅ Generated Passkey: `{passkey}`")
-
-    # 🔐 Encrypt button
-    if st.button("🔐 Encrypt"):
-        if data and passkey:
-            encrypted = encrypt_data(data, passkey)  # Encrypt data with the passkey
-
-            st.success("✅ Data encrypted successfully!")
-            st.code(encrypted, language="text")  # Display encrypted data
-        else:
-            st.error("⚠️ Please enter both data and passkey.")
-
-# 🔓 Decrypt Page
-elif choice == "🔓 Decrypt":
-    st.subheader("🔓 Decrypt Encrypted Data")
-    encrypted_data = st.text_input("🔒 Enter encrypted data:")
-    passkey = st.text_input("🔑 Enter your passkey:", type="password")
-
-    # Preventing too many failed attempts
-    if st.session_state.failed_attempts >= 3:
-        st.warning("🚫 Too many failed attempts. Please reauthorize.")
-        # Directly re-run to reset the page
-        st.session_state.failed_attempts = 0
-        st.experimental_rerun()
-
-    # 🔓 Decrypt button
-    if st.button("🔓 Decrypt"):
-        if encrypted_data and passkey:
-            decrypted = decrypt_data(encrypted_data, passkey)  # Decrypt the data
-            if decrypted:
-                st.success("✅ Decryption Successful!")
-                st.code(decrypted, language="text")  # Display decrypted data
+    if st.button("➡️ Login"):
+        if username in stored_data:
+            if verify_passkey(password, stored_data[username]["password"]):
+                st.session_state.username = username
+                st.success("🟢 Successfully Logged In")
+                st.session_state.page = "dashboard"
             else:
-                remaining = 3 - st.session_state.failed_attempts
-                st.error(f"❌ Incorrect passkey or data. {remaining} attempts remaining.")
+                st.error("❌ Incorrect password")
         else:
-            st.error("⚠️ Please enter both fields.")
+            st.warning("🆕 User not found, please sign up")
 
-# 🔑 Reauthorize Login
-elif choice == "🔑 Login":
-    st.subheader("🔐 Reauthorize Login")
-    passkey = st.text_input("🔑 Enter your passkey to re-login:", type="password")
+    if st.button("📝 Sign Up"):
+        if username and password:
+            if username in stored_data:
+                st.warning("⚠️ Username already exists")
+            else:
+                stored_data[username] = {
+                    "password": hash_passkey(password),
+                    "data": {}
+                }
+                save_data(stored_data)
+                st.success("✅ Signup complete, please log in")
 
-    # ✅ Reauthorize button
-    if st.button("✅ Reauthorize"):
-        hashed = hash_passkey(passkey)
-        if hashed in st.session_state.stored_data:
-            st.session_state.failed_attempts = 0
-            st.success("🔓 Access restored!")
-            st.experimental_rerun()  # Re-run to go back to the home page
+# 🏠 Dashboard page
+def dashboard():
+    st.title(f"🙋 Welcome {st.session_state.username}")
+    if st.button("➕ Save New Data"):
+        st.session_state.page = "store"
+    if st.button("🔍 View Data"):
+        st.session_state.page = "retrieve"
+    if st.button("🚪 Logout"):
+        st.session_state.username = None
+        st.session_state.page = "login"
+
+# 💾 Data Save Page
+def store_data():
+    st.title("📥 Save New Info")
+    key = st.text_input("📝 Enter a name for your data (e.g., note1)")
+    text = st.text_area("✍️ Write your content here")
+    passkey = st.text_input("🔐 Enter your secret passkey", type="password")
+
+    if st.button("🔐 Encrypt and Save"):
+        if key and text and passkey:
+            encrypted = encrypt_text(text, passkey)
+            hashed_key = hash_passkey(passkey)
+            stored_data[st.session_state.username]["data"][key] = {
+                "encrypted_text": encrypted,
+                "passkey": hashed_key
+            }
+            save_data(stored_data)
+            st.success("✅ Successfully saved")
         else:
-            st.error("❌ Invalid passkey.")
+            st.warning("⚠️ All fields are required")
 
-# 📝 Footer with credit
-st.markdown("---")
-st.markdown("<center>Built with ❤️ by Abdul Salam</center>", unsafe_allow_html=True)
+    if st.button("🔙 Go Back"):
+        st.session_state.page = "dashboard"
+
+# 🔓 Data Retrieve Page
+def retrieve_data():
+    global failed_attempts, lockout_start
+
+    st.title("📤 Retrieve Data")
+    key = st.text_input("📝 Enter the name of your data (e.g., note1)")
+    passkey = st.text_input("🔑 Enter passkey", type="password")
+
+    if failed_attempts >= 3:
+        if lockout_start is None:
+            lockout_start = time.time()
+        elif time.time() - lockout_start < lockout_time:
+            st.warning(f"⏳ Please wait: {int(lockout_time - (time.time() - lockout_start))} sec")
+            return
+        else:
+            failed_attempts = 0
+            lockout_start = None
+
+    if st.button("🛠️ Decrypt"):
+        user_data = stored_data[st.session_state.username]["data"]
+        if key in user_data:
+            if verify_passkey(passkey, user_data[key]["passkey"]):
+                decrypted = decrypt_text(user_data[key]["encrypted_text"], passkey)
+                st.success("✅ Here is your data:")
+                st.code(decrypted)
+                failed_attempts = 0
+            else:
+                failed_attempts += 1
+                st.error(f"❌ Incorrect passkey. Attempt: {failed_attempts}/3")
+        else:
+            st.warning("❗ Key does not exist")
+
+    if st.button("🔙 Go Back to Dashboard"):
+        st.session_state.page = "dashboard"
+
+# 🔀 Page Routing
+if st.session_state.page == "login":
+    login_page()
+elif st.session_state.page == "dashboard":
+    dashboard()
+elif st.session_state.page == "store":
+    store_data()
+elif st.session_state.page == "retrieve":
+    retrieve_data()
+else:
+    login_page()
